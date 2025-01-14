@@ -4,16 +4,27 @@ from fastapi import FastAPI, Response, Request, WebSocket
 from pydantic import EmailStr, SecretStr, BaseModel
 import pymysql
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware 
+
+origins = ["http://localhost:5173"]
 
 conection = pymysql.connect(
-    host="127.0.0.1",
+    host="localhost",
     user="root",
-    password="your-password-here",
+    password="bocajunioreselmejorequipo",
     db="vaccines",
     port=3307
 )
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  
+    allow_credentials=True, 
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["*"]
+)
 
 def verify_password(password: str, hashed_password: str):
     return bcrypt.checkpw(password.encode("utf-8"), hashed_password.encode("utf-8"))
@@ -24,8 +35,8 @@ def hash_password(password: str):
 def set_cookie(response: Response, key: str, value: str):
     response.set_cookie(key=key, value=value, httponly=True)
 
-def hash_cookie(id:int, email: str, password: str):
-    value = f"{id}:{email}:{password}"
+def hash_cookie(id:int, email: str, name: str, role: str):
+    value = f"{id}:{email}:{name}:{role}"
     return bcrypt.hashpw(value.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 def delete_cookie(response: Response, key: str):
@@ -54,16 +65,21 @@ class Login(BaseModel):
 @app.post("/auth/login")
 def login(data: Login, response: Response):
     email = data.email
-    password = data.password
-    if(not email and not password):
+    password_plain = data.password
+    if(not all([email, password_plain])):
         return {"success": False, "message": "Error al obtener las credenciales"}
-    query = "SELECT user_id, name, email, role FROM User WHERE email = %s AND password = %s"
     
-    result = execute_query(query, (email, password.get_secret_value()))
-    if(len(result) == 0):
+    query = "SELECT user_id, name, email, role, password FROM User WHERE email = %s"
+    result = execute_query(query, (email))
+    if len(result) == 0:
+        return {"success": False, "message": "Este usuario no se encuentra registrado"}
+    user_id, name, email, role, password = result[0]
+    verify_password_access = verify_password(password_plain.get_secret_value(), password)
+    if(not verify_password_access):
         return {"success": False, "message": "Credenciales incorrectas"}
+
     key_cookie = "session" + result[-1][-1]
-    set_cookie(response, key=key_cookie, value=hash_cookie(result[0][0], email, password.get_secret_value()))
+    set_cookie(response, key=key_cookie, value=hash_cookie(user_id, email, name, role))
     return {"success": True, "message": "Logueado correctamente"}
 
 class UserRegister(BaseModel):
